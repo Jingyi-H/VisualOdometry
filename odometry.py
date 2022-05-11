@@ -2,56 +2,11 @@ from glob import glob
 import cv2, skimage, os, scipy
 import scipy.spatial
 import numpy as np
+from base import VO
 
-
-class Odometry:
-    def __init__(self, frame_path):
-        self.frame_path = frame_path
-        self.images = []
-        self.pos = []
-        self.frames = sorted(glob(os.path.join(self.frame_path, 'images', '*')))
-        with open(os.path.join(frame_path, 'calib.txt'), 'r') as f:
-            lines = f.readlines()
-            self.focal_length = float(lines[0].strip().split()[-1])
-            lines[1] = lines[1].strip().split()
-            self.pp = (float(lines[1][1]), float(lines[1][2]))
-            
-        with open(os.path.join(self.frame_path, 'gt_sequence.txt'), 'r') as f:
-            self.pose = [line.strip().split() for line in f.readlines()]
-
-    def imread(self, fname):
-        """
-        read image into np array from file
-        """
-        return cv2.imread(fname)
-
-    def imread_bw(self, fname):
-        """
-        read image as gray scale format
-        """
-        return cv2.cvtColor(self.imread(fname), cv2.COLOR_BGR2GRAY)
-
-    def imshow(self, img):
-        """
-        show image
-        """
-        skimage.io.imshow(img)
-
-    def get_gt(self, frame_id):
-        pose = self.pose[frame_id]
-        x, y, z = float(pose[3]), float(pose[7]), float(pose[11])
-        return np.array([[x], [y], [z]])
-
-    def get_scale(self, frame_id):
-        '''Provides scale estimation for mutliplying
-        translation vectors
-        
-        Returns:
-        float -- Scalar value allowing for scale estimation
-        '''
-        prev_coords = self.get_gt(frame_id - 1)
-        curr_coords = self.get_gt(frame_id)
-        return np.linalg.norm(curr_coords - prev_coords)
+class Odometry(VO):
+    def __init__(self, frame_path) -> None:
+        super().__init__(frame_path)
 
     def get_sift_data(self, img):
         """
@@ -161,130 +116,14 @@ class Odometry:
         camera_matrix = np.array([[self.focal_length, 0, self.pp[0]],
                                     [0, self.focal_length, self.pp[1]],
                                     [0, 0, 1]])
+
         return camera_matrix
 
     def get_essential_matrix(self, kp1, kp2, thres=0.1, iter=300, p=0.9):
         F, kp1, kp2 = self.ransac(kp1, kp2, max_iters=iter, thres=thres, p=p)
         K = self.get_camera_matrix()
+
         return K.T.dot(F).dot(K), kp1, kp2
-
-    # def calcLucasKanade(self, img1: np.array, img2: np.array)->np.array:
-    #     '''
-    #     referenced from lab5_soln.ipynb
-    #     Takes two consecutive frames from a video and computes Optical flow using LucasKanade algorithm.
-        
-    #     :param img1: frame at t-1
-    #     :param img2: frame at t
-    #     '''
-
-    #     #Flattens last two dimensions in a 4D array
-    #     flattenLast = lambda img: np.reshape(img, (img.shape[0], img.shape[1], -1))
-
-    #     # Flattens first two dimension in a 3D array
-    #     flattenFirst = lambda img: np.reshape(img, (-1, img.shape[-1]))
-
-    #     # kernel for x derivative
-    #     dX = np.array([[1, 0, -1]])
-
-    #     # Kernel for y derivative
-    #     dY = dX.T
-        
-    #     img1, img2 = cv2.GaussianBlur(img1, (5, 5), 0.5), cv2.GaussianBlur(img2, (5, 5), 0.5) 
-        
-    #     # Get X, Y and t derivatives
-    #     Ix = sig.convolve2d(img1, dX, mode='same')
-    #     Iy = sig.convolve2d(img2, dY, mode='same')
-    #     It = img2-img1
-        
-    #     # Gets Sliding windows of size 5x5 for the dervatives
-    #     Ix = sliding_window_view(Ix, (3, 3))
-    #     Iy = sliding_window_view(Iy, (3, 3))
-    #     It = sliding_window_view(It, (3, 3))
-        
-    #     # Flatten for broadcasting matrix multiplications
-    #     Ix = flattenFirst(flattenLast(Ix))
-    #     Iy = flattenFirst(flattenLast(Iy))
-    #     It = flattenFirst(flattenLast(It))
-        
-    #     # Setup the equations
-    #     A = np.dstack((Ix, Iy))
-    #     At = np.transpose(A, (0, 2, 1))
-    #     It = It[:, :, None]
-        
-    #     # Compute flows
-    #     Ainv = np.stack(list(map(np.linalg.inv, At@A+np.random.rand(2,2)*1e-6))) # calculate each matrix inverse
-    #     buf = At@It
-
-    #     flow = Ainv@buf
-    #     flow = np.reshape(flow[:, :, 0], (img1.shape[0]-2, img1.shape[1]-2, 2))
-        
-    #     return flow
-
-    # def calcOpticalFlowLK(self, img1, img2, kp1):
-    #     flow = self.calcLucasKanade(img1, img2)
-    #     u = flow[:, :, 0].T
-    #     v = flow[:, :, 1].T
-    #     assert(kp1.shape[1] == 2 and img1.shape == img2.shape)
-        
-    #     # threshold kp1, discard pts that is out of flow map
-    #     thres = np.array([flow.shape[1], flow.shape[0]])
-    #     status = np.all(kp1 < thres, axis=1).reshape(-1, 1)
-    #     status = np.hstack([status, status])
-    #     kp1 = kp1[status].reshape(-1, 2)
-
-    #     # translation for kp1
-    #     row = kp1.astype(np.int32)[:, 0]
-    #     col = kp1.astype(np.int32)[:, 1]
-    #     du = u[tuple([row.tolist(), col.tolist()])].reshape(-1, 1)
-    #     dv = v[tuple([row.tolist(), col.tolist()])].reshape(-1, 1)
-    #     kp2 = kp1 + np.hstack([du, dv])
-    #     kp2 = np.around(kp2)
-        
-    #     # discard invisible pts
-    #     thres = np.array([img1.shape[1], img1.shape[0]])
-    #     status = np.all((kp2 < thres) & (kp2 >= 0), axis=1).reshape(-1, 1)
-    #     status = np.hstack([status, status])
-
-    #     kp1 = kp1[status].reshape(-1, 2)
-    #     kp2 = kp2[status].reshape(-1, 2)
-
-    #     kp1, kp2 = self.ransac(kp1, kp2, thres=1)
-        
-    #     return kp1, kp2
-    
-    def ransac(self, kp1, kp2, min_inliers=10, max_iters=100, thres=0.5, p=0.99):
-        opt = -1
-        optim_inliers = 0 # optimal number of inliers
-        optim_F = []   # homography corresponding to the optimal number of inliers
-        assert(kp1.shape[0] == kp2.shape[0])
-        n = kp1.shape[0]
-        idx = []
-        for iter in range(max_iters):
-            # randomly select 8 matches
-            randIdx = np.random.randint(0, n, 8)
-            F = self.get_fundamental_matrix(kp1[randIdx, :], kp2[randIdx, :])
-            # test on all input matches
-            _kp1 = np.hstack([kp1, np.ones((n, 1))])
-            _kp2 = np.hstack([kp2, np.ones((n, 1))])
-            prod = _kp1.dot(F).dot(_kp2.T)
-            prod = np.abs(prod.diagonal())
-            norm = np.linalg.norm(prod) / n
-            num_inliers = np.where(prod < thres)[0].size
-            if num_inliers < min_inliers:
-                continue
-            if num_inliers > optim_inliers:
-                # update optim_inliers if current number of inliers is larger than optimal
-                optim_inliers = num_inliers
-                optim_F = F
-                opt = norm
-                idx = np.where(prod < thres)
-            if num_inliers > p * n:
-                break
-
-        kp1 = kp1[idx, :][0]
-        kp2 = kp2[idx, :][0]
-
-        return optim_F, kp1, kp2
 
     def featureTracking(self, img_1, img_2, p1):
         lk_params = dict(winSize  = (21,21),
