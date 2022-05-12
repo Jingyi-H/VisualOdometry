@@ -8,122 +8,12 @@ class Odometry(VO):
     def __init__(self, frame_path) -> None:
         super().__init__(frame_path)
 
-    def get_sift_data(self, img):
-        """
-        detect the keypoints and compute their SIFT descriptors with opencv library
-        """
-        sift = cv2.SIFT_create()
-        kp, des = sift.detectAndCompute(img, None)
-        kp = np.array([k.pt for k in kp])
-        return kp, des
-
-    def get_best_matches(self, img1, img2, num_matches=4000):
-        """
-        Get the top n matches using SIFT to calculate fundamental matrix
-
-        Returns: 
-        ndarray -- 2d pts pairs (num_matches x 4)
-        """
-        _kp1, des1 = self.get_sift_data(img1)
-        _kp2, des2 = self.get_sift_data(img2)
-
-        # find distance between descriptors in images
-        dist = scipy.spatial.distance.cdist(des1, des2, 'sqeuclidean')
-        
-        # get the matches corresponding to the top 8/num_matches dist
-        rows = dist.shape[0]
-        cols = dist.shape[1]
-        idx = np.argsort(dist.flatten())
-        results = []
-        kp1 = []
-        kp2 = []
-        for i in range(num_matches):
-            _kp_1 = _kp1[idx[i]//cols, :]
-            _kp_2 = _kp2[idx[i]%cols, :]
-            # results.append([_kp_1, _kp_2])
-            kp1.append(_kp_1)
-            kp2.append(_kp_2)
-
-        # results = np.array(results).reshape(-1, 4)
-        kp1 = np.array(kp1).reshape(-1, 2)
-        kp2 = np.array(kp2).reshape(-1, 2)
-
-        # return results
-        return kp1, kp2
-
-    def get_fundamental_matrix(self, matches):
-        """
-        Compute fundamental matrix with matches
-        Param:
-        - matches: n x 4 matrix, where n >= 8
-
-        Return fundamental matrix F
-        """
-        assert(matches.shape[0] >= 8)
-        U = []
-        for x1, y1, x2, y2 in matches[:8]:
-            U.append([x1*x2, x1*y2, x1, y1*x2, y1*y2, y1, x2, y2, 1])
-        U = np.array(U).reshape(8, -1)
-        _, _, V = np.linalg.svd(U)
-        F = V[-1,:].squeeze()
-        # normalization
-        F = F / F[8]
-        F = F.reshape(3, 3)
-
-        return F
-    
-    def normalize(self, kp):
-        tx, ty = np.average(kp, axis=0)
-        mc = kp - np.array([tx, ty])
-        # get scale factor
-        s = np.sqrt(np.sum(mc**2))/len(kp)
-        T = np.array([[s, 0, -s*tx],
-                      [0, s, -s*ty],
-                      [0, 0, 1]])
-        
-        kp = np.hstack([kp, np.ones((len(kp), 1))])
-        kp = kp.dot(T.T)
-
-        return T, kp
-
-    def get_fundamental_matrix(self, kp1, kp2):
-        """
-        Compute fundamental matrix with matches
-        Param:
-        - matches: n x 4 matrix, where n >= 8
-
-        Return fundamental matrix F
-        """
-        T1, kp1 = self.normalize(kp1)
-        T2, kp2 = self.normalize(kp2)
-        matches = np.hstack([kp1, kp2])
-        assert(matches.shape[0] >= 8 and matches.shape[1] == 6)
-        U = []
-        # for x1, y1, x2, y2 in matches[:8]:
-        for x1, y1, _, x2, y2, _ in matches[:8]:
-            U.append([x1*x2, x1*y2, x1, y1*x2, y1*y2, y1, x2, y2, 1])
-        U = np.array(U).reshape(8, -1)
-        _, _, V = np.linalg.svd(U)
-        F = V[-1,:].squeeze()
-        # normalization
-        F = F / F[8]
-        F = F.reshape(3, 3)
-        F = (T1.T).dot(F).dot(T2)
-
-        return F
-
     def get_camera_matrix(self):
         camera_matrix = np.array([[self.focal_length, 0, self.pp[0]],
                                     [0, self.focal_length, self.pp[1]],
                                     [0, 0, 1]])
 
         return camera_matrix
-
-    def get_essential_matrix(self, kp1, kp2, thres=0.1, iter=300, p=0.9):
-        F, kp1, kp2 = self.ransac(kp1, kp2, max_iters=iter, thres=thres, p=p)
-        K = self.get_camera_matrix()
-
-        return K.T.dot(F).dot(K), kp1, kp2
 
     def featureTracking(self, img_1, img_2, p1):
         lk_params = dict(winSize  = (21,21),
@@ -190,6 +80,7 @@ class Odometry(VO):
             E, _ = cv2.findEssentialMat(kp_t, kp_t_1, self.focal_length, self.pp, cv2.RANSAC, 0.999, 1.0)
             _, R, t, _ = cv2.recoverPose(E, kp_t, kp_t_1, focal=self.focal_length, pp=self.pp)
             
+            # remove invalid key points
             mask = np.where(mask == 1)[0]
             kp_t_1 = kp_t_1[mask, :].reshape(-1, 2)
             kp_t = kp_t[mask, :].reshape(-1, 2)
