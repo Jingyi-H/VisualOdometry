@@ -1,6 +1,6 @@
 ## Monocular Visual Odometry
 
-    A basic implementation of visual odometry is to track the path of the camera using information from the videos captured. 
+A basic implementation of visual odometry is to track the path of the camera using information from the videos captured. 
 
 ### Overview
 
